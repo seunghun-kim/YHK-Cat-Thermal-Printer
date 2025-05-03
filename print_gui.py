@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QListWidget, QListWidgetItem, QScrollArea, 
                             QFrame, QSizePolicy, QFileDialog, QGridLayout, QCheckBox)
 from PyQt6.QtGui import QPixmap, QIcon, QColor, QPalette
-from PyQt6.QtCore import Qt, QSize, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QSize, QThread, pyqtSignal, QTimer
 import os
 from PIL import Image
 
@@ -33,6 +33,12 @@ class ImagePreviewWidget(QWidget):
         self.scroll_area.setStyleSheet(f"QScrollArea {{ border: 2px solid {border_color}; background-color: {background_color}; }}")
         
         self.layout.addWidget(self.scroll_area)
+        
+        # Drag-and-drop 안내 메시지
+        self.empty_label = QLabel("Drag and drop images here to add them for printing")
+        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_label.setStyleSheet("QLabel { font-size: 14px; color: gray; }")
+        self.grid_layout.addWidget(self.empty_label, 0, 0)
         
         self.image_widgets = []
         self.image_paths = []
@@ -71,6 +77,9 @@ class ImagePreviewWidget(QWidget):
 
     def add_image(self, image_path):
         if image_path not in self.image_paths:
+            # Hide empty label if it exists
+            if self.empty_label:
+                self.empty_label.hide()
             # 이미지 미리보기 위젯
             frame = QFrame()
             frame.setFrameShape(QFrame.Shape.Box)
@@ -129,6 +138,10 @@ class ImagePreviewWidget(QWidget):
             self.grid_layout.addWidget(widget, row, col)
             self.current_row = row
             self.current_col = col
+        
+        # Show empty label if no images remain
+        if not self.image_widgets and self.empty_label:
+            self.empty_label.show()
 
     def get_image_paths(self):
         return self.image_paths
@@ -146,6 +159,25 @@ class CatPrinterGUI(QMainWindow):
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
         layout = QVBoxLayout(main_widget)
+        
+        # 배터리 잔량 표시
+        battery_layout = QHBoxLayout()
+        battery_label = QLabel("Battery:")
+        self.battery_percent_label = QLabel("N/A")
+        battery_layout.addWidget(battery_label)
+        battery_layout.addWidget(self.battery_percent_label)
+        battery_layout.addStretch()
+        layout.addLayout(battery_layout)
+        
+        # Connect/Disconnect 버튼
+        connection_layout = QHBoxLayout()
+        connect_button = QPushButton("Connect Printer")
+        connect_button.clicked.connect(self.connect_printer)
+        disconnect_button = QPushButton("Disconnect Printer")
+        disconnect_button.clicked.connect(self.disconnect_printer)
+        connection_layout.addWidget(connect_button)
+        connection_layout.addWidget(disconnect_button)
+        layout.addLayout(connection_layout)
         
         # 이미지 경로 입력
         path_layout = QHBoxLayout()
@@ -171,6 +203,20 @@ class CatPrinterGUI(QMainWindow):
         self.status_label = QLabel("")
         layout.addWidget(self.status_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
+        # Apply system theme colors to the main window
+        palette = self.palette()
+        background_color = palette.color(QPalette.ColorRole.Window).name()
+        border_color = palette.color(QPalette.ColorRole.Mid).name()
+        self.setStyleSheet(f"QMainWindow {{ background-color: {background_color}; }}")
+        
+        # Timer for battery update
+        self.battery_timer = QTimer(self)
+        self.battery_timer.timeout.connect(self.update_battery_status)
+        self.battery_timer.start(30000)  # Update every 30 seconds
+        
+        # Initial battery update
+        self.update_battery_status()
+
     def select_image(self):
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Select Image", "", "Image Files (*.png *.jpg *.jpeg *.gif *.bmp)"
@@ -180,6 +226,9 @@ class CatPrinterGUI(QMainWindow):
             self.image_preview.add_image(file_path)
 
     def start_printing(self):
+        if not self.printer_logic.is_initialized:
+            self.status_label.setText("Printer not connected. Please connect first.")
+            return
         image_paths = self.image_preview.get_image_paths()
         if not image_paths:
             self.status_label.setText("No images selected")
@@ -208,6 +257,49 @@ class CatPrinterGUI(QMainWindow):
         self.image_preview.setEnabled(enabled)
         for child in self.findChildren(QPushButton):
             child.setEnabled(enabled)
+
+    def update_battery_status(self):
+        try:
+            if self.printer_logic.is_initialized:
+                battery_percent = self.printer_logic.printer.get_battery_percent()
+                self.battery_percent_label.setText(f"{battery_percent}%")
+            else:
+                self.battery_percent_label.setText("Not connected")
+        except Exception as e:
+            self.battery_percent_label.setText("Error")
+            print(f"Battery update error: {e}")
+
+    def connect_printer(self):
+        self.status_label.setText("Connecting to printer...")
+        self.set_ui_enabled(False)
+        
+        # Start connection in a separate thread
+        self.connect_thread = ConnectWorker(self.printer_logic)
+        self.connect_thread.finished.connect(self.on_connection_finished)
+        self.connect_thread.error.connect(self.on_connection_error)
+        self.connect_thread.start()
+        
+    def on_connection_finished(self):
+        self.status_label.setText("Printer connected")
+        self.set_ui_enabled(True)
+        self.update_battery_status()
+        
+    def on_connection_error(self, error_msg):
+        self.status_label.setText(f"Connection error: {error_msg}")
+        self.set_ui_enabled(True)
+
+    def disconnect_printer(self):
+        self.status_label.setText("Disconnecting from printer...")
+        self.set_ui_enabled(False)
+        
+        try:
+            self.printer_logic.close()
+            self.status_label.setText("Printer disconnected")
+        except Exception as e:
+            self.status_label.setText(f"Disconnection error: {e}")
+        finally:
+            self.set_ui_enabled(True)
+            self.battery_percent_label.setText("Not connected")
 
 class PrinterLogic:
     def __init__(self):
@@ -259,6 +351,21 @@ class PrintWorker(QThread):
     def run(self):
         try:
             self.printer_logic.print_images(self.image_paths)
+            self.finished.emit()
+        except Exception as e:
+            self.error.emit(str(e))
+
+class ConnectWorker(QThread):
+    finished = pyqtSignal()
+    error = pyqtSignal(str)
+
+    def __init__(self, printer_logic):
+        super().__init__()
+        self.printer_logic = printer_logic
+
+    def run(self):
+        try:
+            self.printer_logic.initialize_printer()
             self.finished.emit()
         except Exception as e:
             self.error.emit(str(e))

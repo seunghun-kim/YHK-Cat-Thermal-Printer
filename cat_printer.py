@@ -4,6 +4,8 @@ import sys
 import subprocess
 import pathlib
 import socket
+from battery_util import nonlinear_voltage_to_percent
+import re
 from time import sleep, time
 import struct
 
@@ -85,6 +87,13 @@ class CatPrinter:
         self.soc.send(b"\x1e\x47\x03")
         return self.soc.recv(38)
 
+    def _get_printer_voltage(self):
+        """Get printer voltage (private)"""
+        match = re.search(r'VOLT=(\d+)mv', self._get_printer_status().decode('utf-8'))
+        if match:
+            return int(match.group(1))
+        return None
+
     def _get_printer_serial_number(self):
         """Get printer serial number (private)"""
         self.soc.send(b"\x1D\x67\x39")
@@ -151,6 +160,10 @@ class CatPrinter:
         while time() < self._expected_print_finish_time:
             sleep(0.01)
         print("Print completed")
+    
+    def get_battery_percent(self):
+        """Get battery percent (public)"""
+        return nonlinear_voltage_to_percent(self._get_printer_voltage())
 
     def setup(self, mac_address='25:00:04:00:77:6A', port=2):
         """Setup the printer connection and configuration (public)"""
