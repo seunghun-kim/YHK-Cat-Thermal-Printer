@@ -8,7 +8,7 @@ from time import sleep
 import struct
 
 
-printerMACAddress = 'XX:XX:XX:XX:XX:XX'
+printerMACAddress = '25:00:04:00:77:6A'
 printerWidth = 384
 port = 2
 
@@ -130,11 +130,11 @@ getPrinterProductInfo(s)
 sleep(0.5)
 
 #Read Image File
-img = PIL.Image.open("Turtle.jpg")
+# img = PIL.Image.open("IMG_5737.png")
 
-#Create image from text
-#text = "Line 1\nLine 2\nLine 3"
-#img = create_text(text,font_size=65)
+# Create image from text
+text = "Line 1\nLine 2\nLine 3"
+img = create_text(text,font_size=65)
 
 
 printImage(s,img)

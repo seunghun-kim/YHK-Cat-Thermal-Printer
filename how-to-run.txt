@@ -1,0 +1,12 @@
+최초 1회만:
+paru -S bluez-deprecated-tools
+
+재부팅시마다:
+bluetoothctl
+pair 25:00:04:00:77:6A
+trust 25:00:04:00:77:6A
+exit
+sudo rfcomm bind 2 25:00:04:00:77:6A
+
+프린트 돌리기:
+python cat-printer.py
