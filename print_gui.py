@@ -233,7 +233,6 @@ class PrinterLogic:
         # Ensure printer is initialized
         self.initialize_printer()
         
-        # TODO: Implement print_images
         for path in image_paths:
             try:
                 img = Image.open(path)

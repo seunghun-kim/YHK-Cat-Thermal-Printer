@@ -4,7 +4,7 @@ import sys
 import subprocess
 import pathlib
 import socket
-from time import sleep
+from time import sleep, time
 import struct
 
 from image_processor import create_text, process_image_for_printing
@@ -134,6 +134,13 @@ class CatPrinter:
         self._send_end_print_sequence()
         sleep(.5)
 
+        # Update expected print time. It takes 31 seconds to print image of height 1120.
+        # So, per-height print time is 31 / 1120 seconds.
+        per_height_print_time = 31 / 1120
+        expected_print_time = per_height_print_time * im.size[1]
+        print(f"Expected print time: {expected_print_time} seconds")
+        self._expected_print_finish_time = time() + expected_print_time
+
     def print_single_image(self, im):
         """Print a single image (public)"""
         processed_image = process_image_for_printing(im, self.PRINTER_WIDTH)
@@ -141,14 +148,9 @@ class CatPrinter:
 
     def wait_for_print_completion(self):
         """Wait for print completion (public)"""
-        while True:
-            status = self._get_printer_status()
-            # in debug mode, print the status
-            if os.getenv("DEBUG"):
-                print(status)
-            if status.endswith(b'\x03'):
-                break
-            sleep(0.1)
+        while time() < self._expected_print_finish_time:
+            sleep(0.01)
+        print("Print completed")
 
     def setup(self, mac_address='25:00:04:00:77:6A', port=2):
         """Setup the printer connection and configuration (public)"""
