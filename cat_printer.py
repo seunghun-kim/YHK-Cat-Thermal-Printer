@@ -8,13 +8,13 @@ from battery_util import nonlinear_voltage_to_percent
 import re
 from time import sleep, time
 import struct
+import shutil
 
 from image_processor import create_text, process_image_for_printing
 
 # 스크립트가 위치한 디렉토리 기준으로 플래그 파일과 락 파일 경로 설정
 class CatPrinter:
     SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-    FLAG_FILE = os.path.join(SCRIPT_DIR, ".bluez_deprecated_installed")
     LOCK_FILE = os.path.join(SCRIPT_DIR, ".cat_printer.lock")
     PRINTER_WIDTH = 384
 
@@ -36,14 +36,20 @@ class CatPrinter:
 
     def _install_bluez_deprecated_tools(self):
         """최초 1회 설치 (private)"""
-        if not os.path.exists(self.FLAG_FILE):
-            print("Installing bluez-deprecated-tools...")
-            try:
-                subprocess.run(["paru", "-S", "bluez-deprecated-tools"], check=True)
-                pathlib.Path(self.FLAG_FILE).touch()
-                print("bluez-deprecated-tools installed successfully.")
-            except subprocess.CalledProcessError as e:
-                print(f"Failed to install bluez-deprecated-tools: {e}")
+        # Check if rfcomm command exists
+        if shutil.which('rfcomm') is None:
+            # Check if system is Arch Linux
+            if os.path.exists('/etc/arch-release'):
+                print("Installing bluez-deprecated-tools...")
+                try:
+                    # Use pkexec for desktop environment password prompt
+                    subprocess.run(["pkexec", "pacman", "-S", "bluez-deprecated-tools", "--noconfirm"], check=True)
+                    print("bluez-deprecated-tools installed successfully.")
+                except subprocess.CalledProcessError as e:
+                    print(f"Failed to install bluez-deprecated-tools: {e}")
+            else:
+                print("Error: 'rfcomm' command not found. Please install the necessary Bluetooth package for your system (e.g., bluez-utils on Debian/Ubuntu or bluez-deprecated-tools on Arch Linux).")
+                sys.exit(1)
 
     def _setup_bluetooth(self):
         """블루투스 설정 (private)"""
