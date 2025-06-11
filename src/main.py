@@ -1,12 +1,12 @@
 import cat_printer
-import image_processor
+from image_editor.editor import ImageEditor
 import sys
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
+from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                             QHBoxLayout, QLabel, QLineEdit, QPushButton, 
                             QListWidget, QListWidgetItem, QScrollArea, 
                             QFrame, QSizePolicy, QFileDialog, QGridLayout, QCheckBox)
-from PyQt6.QtGui import QPixmap, QIcon, QColor, QPalette
-from PyQt6.QtCore import Qt, QSize, QThread, pyqtSignal, QTimer
+from PySide6.QtGui import QPixmap, QIcon, QColor, QPalette
+from PySide6.QtCore import Qt, QSize, QThread, Signal, QTimer
 import os
 from PIL import Image
 
@@ -23,14 +23,6 @@ class ImagePreviewWidget(QWidget):
         self.scroll_content = QWidget()
         self.grid_layout = QGridLayout(self.scroll_content)
         self.scroll_area.setWidget(self.scroll_content)
-        
-        # 시스템 테마 색상 가져오기
-        palette = self.palette()
-        background_color = palette.color(QPalette.ColorRole.Window).name()
-        border_color = palette.color(QPalette.ColorRole.Mid).name()
-        
-        # 스크롤 영역 스타일 설정 (테두리와 배경색)
-        self.scroll_area.setStyleSheet(f"QScrollArea {{ border: 2px solid {border_color}; background-color: {background_color}; }}")
         
         self.layout.addWidget(self.scroll_area)
         
@@ -155,6 +147,9 @@ class CatPrinterGUI(QMainWindow):
         # Initialize logic
         self.printer_logic = PrinterLogic()
         
+        # Store reference to image editor
+        self.image_editor = None
+        
         # 메인 위젯과 레이아웃
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
@@ -179,15 +174,20 @@ class CatPrinterGUI(QMainWindow):
         connection_layout.addWidget(disconnect_button)
         layout.addLayout(connection_layout)
         
-        # 이미지 경로 입력
+        # 이미지 경로 입력 및 Create new image 버튼
         path_layout = QHBoxLayout()
         path_label = QLabel("Image Path:")
         self.path_entry = QLineEdit()
         path_button = QPushButton("Select Image")
         path_button.clicked.connect(self.select_image)
+        create_image_button = QPushButton("Create New Image")
+        create_image_button.clicked.connect(self.create_new_image)
+        create_image_button.setStyleSheet("QPushButton { background-color: #2196F3; color: white; font-weight: bold; }")
+        
         path_layout.addWidget(path_label)
         path_layout.addWidget(self.path_entry)
         path_layout.addWidget(path_button)
+        path_layout.addWidget(create_image_button)
         layout.addLayout(path_layout)
         
         # 이미지 미리보기 영역
@@ -202,28 +202,25 @@ class CatPrinterGUI(QMainWindow):
         # 상태 메시지
         self.status_label = QLabel("")
         layout.addWidget(self.status_label, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        # Apply system theme colors to the main window
-        palette = self.palette()
-        background_color = palette.color(QPalette.ColorRole.Window).name()
-        border_color = palette.color(QPalette.ColorRole.Mid).name()
-        self.setStyleSheet(f"QMainWindow {{ background-color: {background_color}; }}")
         
         # Timer for battery update
         self.battery_timer = QTimer(self)
         self.battery_timer.timeout.connect(self.update_battery_status)
         self.battery_timer.start(30000)  # Update every 30 seconds
-        
+
         # Initial battery update
         self.update_battery_status()
 
     def select_image(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Image", "", "Image Files (*.png *.jpg *.jpeg *.gif *.bmp)"
+        file_paths, _ = QFileDialog.getOpenFileNames(
+            self, "Select Images", "", "Image Files (*.png *.jpg *.jpeg *.gif *.bmp)"
         )
-        if file_path:
-            self.path_entry.setText(file_path)
-            self.image_preview.add_image(file_path)
+        if file_paths:
+            # Update the path entry with the first selected file for display purposes
+            self.path_entry.setText(file_paths[0] if len(file_paths) == 1 else f"{len(file_paths)} images selected")
+            # Add all selected images to the preview
+            for file_path in file_paths:
+                self.image_preview.add_image(file_path)
 
     def start_printing(self):
         if not self.printer_logic.is_initialized:
@@ -301,6 +298,44 @@ class CatPrinterGUI(QMainWindow):
             self.set_ui_enabled(True)
             self.battery_percent_label.setText("Not connected")
 
+    def create_new_image(self):
+        """Open the image editor to create a new image"""
+        try:
+            # Set default printer width (384px for cat thermal printer)
+            printer_width = 384
+            
+            # Create image editor with callback
+            self.image_editor = ImageEditor(
+                image_width=printer_width,
+                on_image_created=self.on_image_created_from_editor
+            )
+            
+            # Connect signal as well (backup method)
+            self.image_editor.image_created.connect(self.on_image_created_from_editor)
+            
+            # Show the editor
+            self.image_editor.show()
+            
+            self.status_label.setText("Image editor opened")
+            
+        except Exception as e:
+            self.status_label.setText(f"Error opening image editor: {str(e)}")
+    
+    def on_image_created_from_editor(self, image_path):
+        """Handle when an image is created from the editor"""
+        try:
+            # Add the created image to the preview
+            self.image_preview.add_image(image_path)
+            
+            # Update status
+            self.status_label.setText(f"New image created and added to list")
+            
+            # Update path entry to show the created image
+            self.path_entry.setText(f"Created image: {os.path.basename(image_path)}")
+            
+        except Exception as e:
+            self.status_label.setText(f"Error adding created image: {str(e)}")
+
 class PrinterLogic:
     def __init__(self):
         self.printer = cat_printer.CatPrinter()
@@ -340,8 +375,8 @@ class PrinterLogic:
             self.is_initialized = False
 
 class PrintWorker(QThread):
-    finished = pyqtSignal()
-    error = pyqtSignal(str)
+    finished = Signal()
+    error = Signal(str)
 
     def __init__(self, printer_logic, image_paths):
         super().__init__()
@@ -356,8 +391,8 @@ class PrintWorker(QThread):
             self.error.emit(str(e))
 
 class ConnectWorker(QThread):
-    finished = pyqtSignal()
-    error = pyqtSignal(str)
+    finished = Signal()
+    error = Signal(str)
 
     def __init__(self, printer_logic):
         super().__init__()

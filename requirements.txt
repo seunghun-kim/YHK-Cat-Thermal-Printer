@@ -1,2 +1,2 @@
 Pillow
-PyQt6
+PySide6
